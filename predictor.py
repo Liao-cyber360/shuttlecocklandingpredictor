@@ -48,6 +48,10 @@ class TrajectoryPredictor:
                 print("Trajectory validation failed")
                 return None, None, None
 
+            # 计算最大球速
+            max_speed = self._calculate_maximum_speed(cleaned_points, cleaned_times)
+            print(f"🏃 Maximum ball speed: {max_speed:.1f} cm/s ({max_speed/100:.1f} m/s)")
+
             # 直接使用物理模型（跳过有问题的EKF）
             print("Using physics model for prediction")
             landing_position, landing_time, predicted_trajectory = self._predict_with_physics_model(cleaned_points,
@@ -57,11 +61,13 @@ class TrajectoryPredictor:
                 self.last_prediction = {
                     'position': landing_position,
                     'time': landing_time,
-                    'trajectory': predicted_trajectory
+                    'trajectory': predicted_trajectory,
+                    'max_speed': max_speed  # 添加最大速度信息
                 }
                 self.last_prediction_time = time.time()
 
                 print(f"Prediction successful: landing at ({landing_position[0]:.1f}, {landing_position[1]:.1f})")
+                print(f"Maximum speed before landing: {max_speed:.1f} cm/s")
                 return landing_position, landing_time, predicted_trajectory
             else:
                 print("Physics model prediction failed")
@@ -253,6 +259,40 @@ class TrajectoryPredictor:
         except Exception as e:
             print(f"❌ Error in trajectory validation: {e}")
             return False
+
+    def _calculate_maximum_speed(self, points, times):
+        """计算轨迹中的最大球速"""
+        try:
+            if len(points) < 2:
+                return 0.0
+            
+            max_speed = 0.0
+            speeds = []
+            
+            # 计算每个时间段的速度
+            for i in range(1, len(points)):
+                dt = times[i] - times[i-1]
+                if dt > 0:
+                    # 计算3D距离
+                    distance = np.linalg.norm(points[i] - points[i-1])
+                    speed = distance / dt  # cm/s
+                    speeds.append(speed)
+                    max_speed = max(max_speed, speed)
+            
+            if speeds:
+                avg_speed = np.mean(speeds)
+                print(f"📊 Speed analysis: max={max_speed:.1f} cm/s, avg={avg_speed:.1f} cm/s")
+                
+                # 记录速度分布
+                speed_percentiles = np.percentile(speeds, [50, 75, 90, 95])
+                print(f"   Speed percentiles - 50%: {speed_percentiles[0]:.1f}, 75%: {speed_percentiles[1]:.1f}, "
+                      f"90%: {speed_percentiles[2]:.1f}, 95%: {speed_percentiles[3]:.1f}")
+            
+            return max_speed
+            
+        except Exception as e:
+            print(f"❌ Error calculating maximum speed: {e}")
+            return 0.0
 
     def _predict_with_physics_model(self, points, times):
         """使用物理模型的预测方法"""

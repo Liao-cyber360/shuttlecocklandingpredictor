@@ -7,6 +7,127 @@ import threading
 from utils import config
 
 
+class MultiObjectTracker:
+    """多目标跟踪器 - 用于处理多个羽毛球"""
+    
+    def __init__(self, max_objects=2, distance_threshold=100):
+        self.max_objects = max_objects
+        self.distance_threshold = distance_threshold
+        self.tracks = {}  # track_id -> track_info
+        self.next_track_id = 0
+        self.max_missing_frames = 10
+        
+        print(f"🎯 Multi-object tracker initialized (max_objects={max_objects})")
+    
+    def update(self, detections, timestamp):
+        """更新跟踪器"""
+        # 标记所有现有轨迹为丢失
+        for track_id in self.tracks:
+            self.tracks[track_id]['missing_frames'] += 1
+        
+        # 将检测结果分配给现有轨迹或创建新轨迹
+        for detection in detections:
+            pos, conf = detection
+            best_track_id = self._find_best_match(pos)
+            
+            if best_track_id is not None:
+                # 更新现有轨迹
+                self._update_track(best_track_id, pos, conf, timestamp)
+            elif len(self.tracks) < self.max_objects:
+                # 创建新轨迹
+                self._create_track(pos, conf, timestamp)
+        
+        # 移除长时间丢失的轨迹
+        self._remove_lost_tracks()
+        
+        return list(self.tracks.keys())
+    
+    def _find_best_match(self, pos):
+        """找到最佳匹配的轨迹"""
+        best_track_id = None
+        min_distance = float('inf')
+        
+        for track_id, track in self.tracks.items():
+            if len(track['positions']) > 0:
+                last_pos = track['positions'][-1]
+                distance = np.linalg.norm(np.array(pos) - np.array(last_pos))
+                
+                if distance < self.distance_threshold and distance < min_distance:
+                    min_distance = distance
+                    best_track_id = track_id
+        
+        return best_track_id
+    
+    def _create_track(self, pos, conf, timestamp):
+        """创建新轨迹"""
+        track_id = self.next_track_id
+        self.next_track_id += 1
+        
+        self.tracks[track_id] = {
+            'positions': [pos],
+            'confidences': [conf],
+            'timestamps': [timestamp],
+            'missing_frames': 0,
+            'created_at': timestamp
+        }
+        
+        print(f"🆕 Created new track {track_id} at position {pos}")
+    
+    def _update_track(self, track_id, pos, conf, timestamp):
+        """更新轨迹"""
+        track = self.tracks[track_id]
+        track['positions'].append(pos)
+        track['confidences'].append(conf)
+        track['timestamps'].append(timestamp)
+        track['missing_frames'] = 0
+        
+        # 限制轨迹长度
+        max_history = 50
+        if len(track['positions']) > max_history:
+            track['positions'] = track['positions'][-max_history:]
+            track['confidences'] = track['confidences'][-max_history:]
+            track['timestamps'] = track['timestamps'][-max_history:]
+    
+    def _remove_lost_tracks(self):
+        """移除丢失的轨迹"""
+        to_remove = []
+        for track_id, track in self.tracks.items():
+            if track['missing_frames'] > self.max_missing_frames:
+                to_remove.append(track_id)
+        
+        for track_id in to_remove:
+            print(f"🗑️ Removing lost track {track_id}")
+            del self.tracks[track_id]
+    
+    def get_tracks(self):
+        """获取所有活跃轨迹"""
+        return self.tracks
+    
+    def get_best_track(self):
+        """获取最佳轨迹（最长且最近活跃）"""
+        if not self.tracks:
+            return None, None
+        
+        best_track_id = None
+        best_score = -1
+        
+        for track_id, track in self.tracks.items():
+            # 评分标准：轨迹长度 + 最近活跃程度 + 平均置信度
+            length_score = len(track['positions'])
+            recency_score = max(0, 10 - track['missing_frames'])
+            confidence_score = np.mean(track['confidences']) if track['confidences'] else 0
+            
+            total_score = length_score + recency_score + confidence_score * 10
+            
+            if total_score > best_score:
+                best_score = total_score
+                best_track_id = track_id
+        
+        if best_track_id is not None:
+            return best_track_id, self.tracks[best_track_id]
+        return None, None
+
+
 class TrajectoryQualityEvaluator:
     """轨迹质量评估器"""
 
@@ -346,7 +467,7 @@ class BufferedImageProcessor:
                 print("⚠️ Cannot clear buffer while processing")
 
     def _detect_shuttlecock_in_frame(self, frame):
-        """在单帧中检测羽毛球"""
+        """在单帧中检测羽毛球 - 支持多个羽毛球"""
         if frame is None:
             return []
 
@@ -377,6 +498,13 @@ class BufferedImageProcessor:
                     center = ((x1 + x2) // 2, (y1 + y2) // 2)
                     detections.append((center, conf))
 
+        # 如果检测到多个羽毛球，按置信度排序并标记
+        if len(detections) > 1:
+            detections.sort(key=lambda x: x[1], reverse=True)  # 按置信度降序排序
+            print(f"🏸 Multiple shuttlecocks detected: {len(detections)} objects")
+            for i, (pos, conf) in enumerate(detections):
+                print(f"   Shuttlecock {i+1}: position {pos}, confidence {conf:.3f}")
+
         return detections
 
     def get_buffer_info(self):
@@ -398,7 +526,7 @@ class BufferedImageProcessor:
 
 
 class StereoProcessor:
-    """增强的双目视觉处理器 - 添加调试数据追踪"""
+    """增强的双目视觉处理器 - 添加调试数据追踪和多目标支持"""
 
     def __init__(self):
         self.camera1_params = None
@@ -407,6 +535,9 @@ class StereoProcessor:
 
         # 轨迹管理
         self.trajectory_manager = TrajectorySegmentManager()
+        
+        # 多目标跟踪器
+        self.multi_tracker = MultiObjectTracker(max_objects=2, distance_threshold=100)
 
         # 场地过滤参数 (cm) - 扩大范围支持场地外预测
         self.court_bounds = {
@@ -418,16 +549,17 @@ class StereoProcessor:
             'z_max': 800  # 8米高度上限
         }
 
-        # 3D点存储
+        # 3D点存储 - 支持多轨迹
         self.all_3d_points = []
         self.all_timestamps = []
+        self.track_data = {}  # track_id -> {'points': [], 'timestamps': []}
 
         # 新增：调试数据存储
         self.rejected_points = []  # 被边界过滤排除的点
         self.low_quality_points = []  # 质量评估低的点
         self.triangulation_failed_points = []  # 三角测量失败的点对
 
-        print("StereoProcessor initialized with debug tracking enabled")
+        print("StereoProcessor initialized with debug tracking and multi-object support enabled")
 
     def load_camera_parameters(self, camera1_file, camera2_file):
         """加载相机参数"""
@@ -494,7 +626,7 @@ class StereoProcessor:
             self.fundamental_matrix = None
 
     def process_batch_detections(self, detections_list1, detections_list2, timestamps):
-        """批量处理检测结果 - 增强调试追踪"""
+        """批量处理检测结果 - 增强调试追踪和多目标支持"""
         if len(detections_list1) != len(detections_list2) != len(timestamps):
             print("Error: Detection lists and timestamps length mismatch")
             return []
@@ -507,12 +639,16 @@ class StereoProcessor:
         self.low_quality_points = []
         self.triangulation_failed_points = []
 
-        print(f"Processing {len(detections_list1)} frame pairs...")
+        print(f"Processing {len(detections_list1)} frame pairs with multi-object tracking...")
 
+        # 处理每一帧的检测结果
         for i, (det1, det2, timestamp) in enumerate(zip(detections_list1, detections_list2, timestamps)):
             # 双目匹配
             matched_pairs = self._match_stereo_points(det1, det2)
 
+            # 当前帧的所有3D检测点
+            frame_3d_points = []
+            
             # 三角测量
             for left_point, right_point, match_distance, match_conf in matched_pairs:
                 point_3d = self._triangulate_point(left_point, right_point)
@@ -529,6 +665,7 @@ class StereoProcessor:
                     continue
 
                 if self._is_point_in_bounds(point_3d):
+                    frame_3d_points.append((point_3d, match_conf))
                     all_3d_points.append(point_3d)
                     all_timestamps_3d.append(timestamp)
                 else:
@@ -541,16 +678,83 @@ class StereoProcessor:
                         'match_confidence': match_conf,
                         'match_distance': match_distance
                     })
+            
+            # 更新多目标跟踪器
+            if frame_3d_points:
+                # 将3D点投影到2D用于跟踪（使用相机1的投影）
+                tracking_detections = []
+                for point_3d, conf in frame_3d_points:
+                    # 简化投影：使用XY坐标作为2D位置
+                    pos_2d = (int(point_3d[0] + 500), int(point_3d[1] + 500))  # 偏移到正值
+                    tracking_detections.append((pos_2d, conf))
+                
+                # 更新跟踪器
+                active_tracks = self.multi_tracker.update(tracking_detections, timestamp)
+                
+                if len(active_tracks) > 1:
+                    print(f"📍 Frame {i}: Tracking {len(active_tracks)} shuttlecocks")
 
         # 存储所有3D点
         self.all_3d_points = all_3d_points
         self.all_timestamps = all_timestamps_3d
+
+        # 分析跟踪结果
+        tracks = self.multi_tracker.get_tracks()
+        if len(tracks) > 1:
+            print(f"🏸 Multiple shuttlecock tracks detected:")
+            for track_id, track in tracks.items():
+                print(f"   Track {track_id}: {len(track['positions'])} points, "
+                      f"avg_conf={np.mean(track['confidences']):.3f}")
 
         print(f"Generated {len(all_3d_points)} valid 3D points from batch processing")
         print(f"Rejected {len(self.rejected_points)} out-of-bounds points")
         print(f"Failed triangulation for {len(self.triangulation_failed_points)} point pairs")
 
         return all_3d_points, all_timestamps_3d
+
+    def get_best_trajectory_from_tracks(self, current_time):
+        """从多个轨迹中选择最佳轨迹进行预测"""
+        tracks = self.multi_tracker.get_tracks()
+        
+        if not tracks:
+            # 没有轨迹时，使用传统方法
+            return self.find_best_trajectory_for_prediction(current_time)
+        
+        if len(tracks) == 1:
+            # 只有一个轨迹
+            track_id, track = list(tracks.items())[0]
+            print(f"📍 Using single track {track_id} with {len(track['positions'])} points")
+            return self.find_best_trajectory_for_prediction(current_time)
+        
+        # 多个轨迹，选择最佳的
+        best_track_id, best_track = self.multi_tracker.get_best_track()
+        if best_track_id is not None:
+            print(f"🎯 Selected best track {best_track_id} from {len(tracks)} tracks")
+            print(f"   Track quality: {len(best_track['positions'])} points, "
+                  f"missing_frames={best_track['missing_frames']}")
+            
+            # 过滤轨迹数据并转换为3D点
+            track_3d_points = []
+            track_timestamps = []
+            
+            # 在所有3D点中查找属于此轨迹的点
+            # 这里简化处理，使用时间窗口匹配
+            track_start_time = best_track['created_at']
+            track_end_time = best_track['timestamps'][-1] if best_track['timestamps'] else current_time
+            
+            for i, timestamp in enumerate(self.all_timestamps):
+                if track_start_time <= timestamp <= track_end_time + 0.1:  # 允许小误差
+                    track_3d_points.append(self.all_3d_points[i])
+                    track_timestamps.append(timestamp)
+            
+            if len(track_3d_points) >= 5:
+                print(f"📊 Using {len(track_3d_points)} 3D points from best track")
+                confidence = min(1.0, len(track_3d_points) / 20.0)  # 基于点数的置信度
+                return track_3d_points, track_timestamps, confidence
+        
+        # 如果无法从轨迹获取足够数据，回退到传统方法
+        print("⚠️ Falling back to traditional trajectory selection")
+        return self.find_best_trajectory_for_prediction(current_time)
 
     def _match_stereo_points(self, detections_left, detections_right, epipolar_threshold=35.0):
         """基于极线约束匹配双目点"""
