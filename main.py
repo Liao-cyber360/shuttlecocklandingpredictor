@@ -12,6 +12,8 @@ from calibration import calibrate_cameras
 from detector import BufferedImageProcessor, StereoProcessor
 from predictor import TrajectoryPredictor, CourtBoundaryAnalyzer
 from visualization_3d import Interactive3DVisualizer
+from network_camera import NetworkCameraManager
+from video_controls import EnhancedVideoControls
 
 
 class SystemState(Enum):
@@ -36,6 +38,12 @@ class BufferedBadmintonSystem:
         self.video_path2 = None
         self.camera1_params_file = None
         self.camera2_params_file = None
+        
+        # 新增：网络摄像头支持
+        self.camera_url1 = None
+        self.camera_url2 = None
+        self.network_mode = False
+        self.timestamp_header = "X-Timestamp"
 
         # 核心模块
         self.buffered_processor = None
@@ -47,6 +55,10 @@ class BufferedBadmintonSystem:
         # 视频捕获
         self.cap1 = None
         self.cap2 = None
+        self.network_camera_manager = None
+        
+        # 新增：视频控制组件
+        self.video_controls = None
 
         # 帧率控制
         self.video_fps = 30.0
@@ -81,12 +93,18 @@ class BufferedBadmintonSystem:
         self.system_start_time = time.time()
         self.total_predictions = 0
         self.successful_predictions = 0
+        
+        # 视频控制相关
+        self.total_frames = 0
+        self.current_frame_index = 0
+        self.seek_requested = False
+        self.seek_frame = 0
 
         print("=" * 80)
-        print("Enhanced Buffered Badminton System v5.1 - Fully Fixed Architecture")
+        print("Enhanced Buffered Badminton System v5.2 - Network Camera Support")
         print(f"Initialized at: {time.strftime('%Y-%m-%d %H:%M:%S')} UTC")
         print(f"Current User: Liao-cyber360")
-        print("Key Features: Robust 3D visualization, Enhanced state management")
+        print("Key Features: Network cameras, Progress bar, Multi-object tracking")
         print("=" * 80)
 
     def initialize_system(self, video_path1, video_path2):
@@ -121,13 +139,27 @@ class BufferedBadmintonSystem:
 
         self.video_fps = min(fps1, fps2) if fps1 > 0 and fps2 > 0 else 30.0
         self.frame_time = 1.0 / self.video_fps
+        self.total_frames = min(frame_count1, frame_count2)
 
         print(f"📹 Video Information:")
         print(f"   Camera 1: {fps1:.1f} FPS, {frame_count1} frames")
         print(f"   Camera 2: {fps2:.1f} FPS, {frame_count2} frames")
         print(f"   Using playback FPS: {self.video_fps:.1f}")
+        print(f"   Total frames: {self.total_frames}")
+
+        # 初始化视频控制组件
+        self.video_controls = EnhancedVideoControls(video_width=1280)
+        self.video_controls.set_video_info(self.total_frames, self.video_fps)
 
         # 初始化核心模块
+        self._initialize_core_modules()
+
+        print("✅ Enhanced system initialization complete!")
+        print(f"📊 System ready for operation at {time.strftime('%H:%M:%S')} UTC")
+        return True
+
+    def _initialize_core_modules(self):
+        """初始化核心模块"""
         print("🔧 Initializing core modules...")
 
         # 缓冲处理器
@@ -152,6 +184,48 @@ class BufferedBadmintonSystem:
 
         print("✅ Enhanced system initialization complete!")
         print(f"📊 System ready for operation at {time.strftime('%H:%M:%S')} UTC")
+        return True
+
+    def initialize_network_cameras(self, camera_url1, camera_url2=None, timestamp_header="X-Timestamp"):
+        """初始化网络摄像头系统"""
+        print("🌐 Initializing network camera system...")
+        
+        self.camera_url1 = camera_url1
+        self.camera_url2 = camera_url2
+        self.timestamp_header = timestamp_header
+        self.network_mode = True
+        
+        # 创建网络摄像头管理器
+        self.network_camera_manager = NetworkCameraManager(
+            camera_url1, camera_url2, timestamp_header
+        )
+        
+        # 启动网络流
+        if not self.network_camera_manager.start():
+            raise RuntimeError("Failed to start network camera streams")
+        
+        # 等待几秒让流稳定
+        print("⏳ Waiting for network streams to stabilize...")
+        time.sleep(3)
+        
+        # 获取FPS信息
+        self.video_fps = self.network_camera_manager.get_fps()
+        if self.video_fps <= 0:
+            self.video_fps = 30.0  # 默认FPS
+        self.frame_time = 1.0 / self.video_fps
+        
+        print(f"📹 Network Camera Information:")
+        print(f"   Camera 1: {camera_url1}")
+        if camera_url2:
+            print(f"   Camera 2: {camera_url2}")
+        print(f"   Timestamp header: {timestamp_header}")
+        print(f"   Estimated FPS: {self.video_fps:.1f}")
+        
+        # 初始化核心模块（与视频文件模式相同）
+        self._initialize_core_modules()
+        
+        print("✅ Network camera system initialization complete!")
+        print(f"📊 System ready for network operation at {time.strftime('%H:%M:%S')} UTC")
         return True
 
     def calibration_mode(self):
@@ -235,14 +309,20 @@ class BufferedBadmintonSystem:
             # 获取调试数据
             debug_data = self.stereo_processor.get_debug_data()
 
-            # 找到最佳轨迹片段
+            # 找到最佳轨迹片段 - 使用多目标跟踪
             best_trajectory, best_timestamps, confidence = \
-                self.stereo_processor.find_best_trajectory_for_prediction(current_time)
+                self.stereo_processor.get_best_trajectory_from_tracks(current_time)
 
             if best_trajectory is None or confidence < 0.3:
                 print(f"❌ Trajectory quality insufficient for prediction (confidence: {confidence:.2f})")
-                self._handle_prediction_failure(debug_data, "Insufficient trajectory quality")
-                return
+                print("   Trying fallback trajectory selection...")
+                # 回退到传统方法
+                best_trajectory, best_timestamps, confidence = \
+                    self.stereo_processor.find_best_trajectory_for_prediction(current_time)
+                
+                if best_trajectory is None or confidence < 0.3:
+                    self._handle_prediction_failure(debug_data, "Insufficient trajectory quality")
+                    return
 
             print(f"✅ Found quality trajectory: {len(best_trajectory)} points, confidence: {confidence:.2f}")
 
@@ -555,11 +635,18 @@ class BufferedBadmintonSystem:
             self._cleanup()
 
     def _print_control_instructions(self):
-        """打印控制说明 - 完整版本"""
+        """打印控制说明 - 完整版本，包含新功能"""
         print("\n📋 ENHANCED SYSTEM CONTROLS:")
         print("   ▶️  SPACE     - Pause/Resume video playback")
         print("   🎯 T         - Trigger trajectory analysis (when paused)")
         print("   ▶️  P         - Resume playback (when paused)")
+        
+        if not self.network_mode:
+            print("   🎮 MOUSE     - Drag progress bar to seek video position")
+            print("   📍 CLICK     - Click progress bar to jump to position")
+        else:
+            print("   📡 NETWORK   - Network camera mode (seeking disabled)")
+        
         print("   🔍 V         - Toggle 3D visualization window")
         print("   ❌ Q         - Close 3D visualization window")
         print("   📊 D         - Print detailed debug statistics")
@@ -576,8 +663,17 @@ class BufferedBadmintonSystem:
         print("   4 - Toggle low quality points (orange)")
         print("   5 - Toggle triangulation failed (gray)")
         print("   6 - Toggle predicted trajectory (cyan line)")
+        print("\n🏸 NEW FEATURES v5.2:")
+        print("   • Multi-shuttlecock detection and tracking")
+        print("   • Maximum ball speed calculation before landing")
+        print("   • Network camera MJPEG stream support")
+        print("   • Draggable progress bar for video seeking")
+        print("   • Intelligent mode switching (video/camera)")
         print("\n💡 RECOMMENDED WORKFLOW:")
-        print("   1. Watch video → 2. SPACE to pause → 3. T to predict → 4. V for 3D → 5. P to resume")
+        if self.network_mode:
+            print("   1. Monitor network stream → 2. SPACE to pause buffering → 3. T to predict → 4. V for 3D")
+        else:
+            print("   1. Use progress bar to find trajectory → 2. SPACE to pause → 3. T to predict → 4. V for 3D")
         print(f"{'=' * 80}")
 
     def _handle_paused_state(self):
@@ -593,13 +689,64 @@ class BufferedBadmintonSystem:
         return elapsed_since_last_frame >= target_frame_time
 
     def _process_video_frame(self):
-        """处理视频帧 - 增强版本"""
+        """处理视频帧 - 增强版本，支持网络摄像头和进度条"""
+        if self.network_mode:
+            # 网络摄像头模式
+            return self._process_network_camera_frame()
+        else:
+            # 本地视频文件模式
+            return self._process_local_video_frame()
+    
+    def _process_network_camera_frame(self):
+        """处理网络摄像头帧"""
+        if not self.network_camera_manager:
+            return False
+        
+        # 读取最新帧
+        (ret1, ret2), (frame1, frame2) = self.network_camera_manager.read()
+        
+        if not ret1 or not ret2 or frame1 is None or frame2 is None:
+            return True  # 网络流可能暂时无数据，继续运行
+        
+        # 更新时间基准
+        self.last_frame_time = time.time()
+        
+        # 更新帧计数和FPS
+        self.frame_count += 1
+        self._update_fps()
+        
+        # 添加到缓冲区（只在缓冲状态且未处理时）
+        if self.state == SystemState.BUFFERING and not self.processing_lock:
+            self.buffered_processor.add_frame_pair(frame1, frame2, self.last_frame_time)
+        
+        # 保存当前帧用于显示
+        self.current_frame1 = frame1.copy() if frame1 is not None else np.zeros((480, 640, 3), dtype=np.uint8)
+        self.current_frame2 = frame2.copy() if frame2 is not None else np.zeros((480, 640, 3), dtype=np.uint8)
+        
+        return True
+    
+    def _process_local_video_frame(self):
+        """处理本地视频文件帧"""
+        # 检查是否有跳转请求
+        if self.video_controls:
+            seek_requested, seek_frame = self.video_controls.is_seek_requested()
+            if seek_requested:
+                self._seek_to_frame(seek_frame)
+                print(f"📍 Seeking to frame {seek_frame}")
+        
         # 读取帧
         ret1, frame1 = self.cap1.read()
         ret2, frame2 = self.cap2.read()
 
         if not ret1 or not ret2:
             return False
+
+        # 更新当前帧索引
+        self.current_frame_index += 1
+        
+        # 更新进度条
+        if self.video_controls:
+            self.video_controls.update_position(self.current_frame_index)
 
         # 更新时间基准
         self.last_frame_time = time.time()
@@ -617,13 +764,36 @@ class BufferedBadmintonSystem:
         self.current_frame2 = frame2 if frame2 is not None else np.zeros((480, 640, 3), dtype=np.uint8)
 
         return True
+    
+    def _seek_to_frame(self, frame_number):
+        """跳转到指定帧"""
+        if self.network_mode:
+            print("⚠️ Seeking not supported in network camera mode")
+            return
+        
+        if self.cap1 and self.cap2:
+            self.cap1.set(cv2.CAP_PROP_POS_FRAMES, frame_number)
+            self.cap2.set(cv2.CAP_PROP_POS_FRAMES, frame_number)
+            self.current_frame_index = frame_number
+            print(f"📍 Seeked to frame {frame_number}")
 
     def _update_display(self):
-        """更新显示 - 增强版本"""
+        """更新显示 - 增强版本，支持进度条"""
         if hasattr(self, 'current_frame1') and hasattr(self, 'current_frame2'):
             display_frame = self._create_display_frame(self.current_frame1, self.current_frame2)
             if display_frame is not None:
-                cv2.imshow('Enhanced Badminton System - Live View', display_frame)
+                # 在网络摄像头模式下，不显示进度条
+                if self.network_mode or not self.video_controls:
+                    cv2.imshow('Enhanced Badminton System - Live View', display_frame)
+                else:
+                    # 本地视频模式，添加进度条
+                    combined_frame = self.video_controls.render_with_video(display_frame)
+                    if combined_frame is not None:
+                        cv2.imshow('Enhanced Badminton System - Live View', combined_frame)
+                        # 设置鼠标回调（仅第一次）
+                        self.video_controls.set_mouse_callback('Enhanced Badminton System - Live View')
+                    else:
+                        cv2.imshow('Enhanced Badminton System - Live View', display_frame)
 
     def _handle_background_tasks(self):
         """处理背景任务 - 优化版本"""
@@ -1004,10 +1174,14 @@ class BufferedBadmintonSystem:
             self.fps_prev_time = current_time
 
     def _cleanup(self):
-        """清理系统资源 - 增强版本"""
+        """清理系统资源 - 增强版本，支持网络摄像头"""
         print("\n🔄 Cleaning up system resources...")
 
         try:
+            # 停止网络摄像头
+            if self.network_camera_manager:
+                self.network_camera_manager.stop()
+
             # 停止视频捕获
             if self.cap1:
                 self.cap1.release()
@@ -1031,6 +1205,9 @@ class BufferedBadmintonSystem:
             if self.total_predictions > 0:
                 success_rate = (self.successful_predictions / self.total_predictions) * 100
                 print(f"   Success rate: {success_rate:.1f}%")
+            
+            mode_text = "Network Camera" if self.network_mode else "Local Video"
+            print(f"   Mode: {mode_text}")
 
         except Exception as e:
             print(f"⚠️ Error during cleanup: {e}")
@@ -1043,13 +1220,35 @@ class BufferedBadmintonSystem:
 def parse_arguments():
     """解析命令行参数"""
     parser = argparse.ArgumentParser(
-        description="Enhanced Buffered Badminton Landing Prediction System v5.1 - Fully Fixed Architecture"
+        description="Enhanced Buffered Badminton Landing Prediction System v5.2 - Network Camera Support"
     )
 
-    parser.add_argument("--video1", type=str, required=True,
-                        help="Path to first camera video file")
-    parser.add_argument("--video2", type=str, required=True,
-                        help="Path to second camera video file")
+    # 创建互斥组：本地视频或网络摄像头
+    mode_group = parser.add_mutually_exclusive_group(required=True)
+    
+    # 本地视频模式
+    mode_group.add_argument("--video-mode", action="store_true",
+                           help="Use local video files")
+    
+    # 网络摄像头模式
+    mode_group.add_argument("--camera-mode", action="store_true",
+                           help="Use network cameras (MJPEG streams)")
+
+    # 本地视频参数
+    parser.add_argument("--video1", type=str,
+                        help="Path to first camera video file (required for --video-mode)")
+    parser.add_argument("--video2", type=str,
+                        help="Path to second camera video file (required for --video-mode)")
+    
+    # 网络摄像头参数
+    parser.add_argument("--camera-url1", type=str,
+                        help="URL for first camera MJPEG stream (required for --camera-mode)")
+    parser.add_argument("--camera-url2", type=str,
+                        help="URL for second camera MJPEG stream (optional for --camera-mode)")
+    parser.add_argument("--timestamp-header", type=str, default="X-Timestamp",
+                        help="HTTP header name for timestamp (default: X-Timestamp)")
+    
+    # 标定参数
     parser.add_argument("--calibrated", action="store_true",
                         help="Skip calibration if cameras are already calibrated")
     parser.add_argument("--cam1_params", type=str, default=None,
@@ -1061,33 +1260,58 @@ def parse_arguments():
 
 
 def main():
-    """主函数 - 增强版本"""
+    """主函数 - 增强版本，支持网络摄像头"""
     try:
         print("=" * 80)
-        print("Enhanced Buffered Badminton Shuttlecock Landing Prediction System v5.1")
-        print("Fully Fixed Architecture with Robust 3D Visualization")
+        print("Enhanced Buffered Badminton Shuttlecock Landing Prediction System v5.2")
+        print("Network Camera Support with Multi-Object Tracking")
         print("=" * 80)
         print(f"Session started at: {time.strftime('%Y-%m-%d %H:%M:%S')} UTC")
         print(f"Current User: Liao-cyber360")
-        print(f"System Architecture: Non-blocking with Enhanced Debug Visualization")
-        print(f"Key Improvements: Window lifecycle, State management, Error recovery")
+        print(f"Features: Network cameras, Progress bar, Multi-shuttlecock tracking, Max speed calculation")
         print("=" * 80)
 
         args = parse_arguments()
 
-        # 验证视频文件
-        if not os.path.exists(args.video1):
-            raise FileNotFoundError(f"Video file not found: {args.video1}")
-        if not os.path.exists(args.video2):
-            raise FileNotFoundError(f"Video file not found: {args.video2}")
-
-        print(f"📹 Input Videos:")
-        print(f"   Camera 1: {args.video1}")
-        print(f"   Camera 2: {args.video2}")
-
         # 创建和初始化系统
         system = BufferedBadmintonSystem()
-        system.initialize_system(args.video1, args.video2)
+        
+        # 根据模式初始化
+        if args.video_mode:
+            # 本地视频模式
+            if not args.video1 or not args.video2:
+                raise ValueError("--video1 and --video2 are required for --video-mode")
+            
+            # 验证视频文件
+            if not os.path.exists(args.video1):
+                raise FileNotFoundError(f"Video file not found: {args.video1}")
+            if not os.path.exists(args.video2):
+                raise FileNotFoundError(f"Video file not found: {args.video2}")
+
+            print(f"📹 Local Video Mode:")
+            print(f"   Camera 1: {args.video1}")
+            print(f"   Camera 2: {args.video2}")
+            
+            system.initialize_system(args.video1, args.video2)
+            
+        elif args.camera_mode:
+            # 网络摄像头模式
+            if not args.camera_url1:
+                raise ValueError("--camera-url1 is required for --camera-mode")
+            
+            print(f"🌐 Network Camera Mode:")
+            print(f"   Camera 1: {args.camera_url1}")
+            if args.camera_url2:
+                print(f"   Camera 2: {args.camera_url2}")
+            else:
+                print(f"   Camera 2: Single camera mode")
+            print(f"   Timestamp header: {args.timestamp_header}")
+            
+            system.initialize_network_cameras(
+                args.camera_url1, 
+                args.camera_url2, 
+                args.timestamp_header
+            )
 
         # 处理标定
         if args.calibrated and args.cam1_params and args.cam2_params:
@@ -1104,6 +1328,12 @@ def main():
 
         print("\n" + "=" * 80)
         print("✅ SYSTEM READY - Starting Enhanced Video Processing")
+        if system.network_mode:
+            print("🌐 Network Camera Mode - Progress bar disabled")
+            print("📡 Stream buffering active - Use pause for trajectory analysis")
+        else:
+            print("📹 Local Video Mode - Progress bar enabled")
+            print("🎮 Drag progress bar to seek, pause for trajectory analysis")
         print("=" * 80)
 
         # 开始主处理循环
@@ -1126,7 +1356,7 @@ def main():
     finally:
         cv2.destroyAllWindows()
         print("\n✅ All resources cleaned up successfully.")
-        print("Thank you for using Enhanced Badminton Prediction System v5.1")
+        print("Thank you for using Enhanced Badminton Prediction System v5.2")
 
 
 if __name__ == "__main__":
