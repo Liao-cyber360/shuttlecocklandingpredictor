@@ -752,6 +752,234 @@ class BadmintonCalibrator:
 
         return None
 
+    def calibrate_from_camera(self, camera_manager, num_frames=20, preview_time=5.0):
+        """
+        使用摄像头实时画面进行标定
+        
+        参数:
+            camera_manager: NetworkCameraManager实例
+            num_frames: 用于检测的帧数
+            preview_time: 预览时间(秒)
+        
+        返回:
+            bool: 标定是否成功
+        """
+        print("🎯 Starting camera live feed calibration...")
+        
+        # 检查摄像头是否正常工作
+        if not camera_manager.isOpened():
+            print("Error: Camera manager is not properly initialized")
+            return False
+        
+        # 显示初始指导
+        cv2.namedWindow("Camera Calibration Guide", cv2.WINDOW_NORMAL)
+        cv2.resizeWindow("Camera Calibration Guide", 800, 600)
+
+        guide_img = np.zeros((600, 800, 3), dtype=np.uint8)
+        guide_texts = [
+            "Badminton Court Camera Calibration",
+            "",
+            "1. Camera live feed will be shown for selecting court corners",
+            "2. Right-click near each corner to select precise position",
+            "3. Follow order: Bottom Left, Bottom Right, Top Right, Top Left",
+            "4. After corner selection, automatic court point detection will run",
+            "",
+            f"Preview time: {preview_time} seconds",
+            f"Frames for detection: {num_frames}",
+            "",
+            "Press SPACE to continue..."
+        ]
+
+        for i, text in enumerate(guide_texts):
+            cv2.putText(guide_img, text, (50, 80 + i * 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
+
+        cv2.imshow("Camera Calibration Guide", guide_img)
+        while True:
+            key = cv2.waitKey(1) & 0xFF
+            if key == ord(' '):
+                break
+            elif key == 27:  # ESC to cancel
+                cv2.destroyWindow("Camera Calibration Guide")
+                return False
+        cv2.destroyWindow("Camera Calibration Guide")
+
+        # 获取实时画面进行角点选择
+        print("📹 Capturing live frame for corner selection...")
+        
+        # 等待稳定的画面
+        stable_frame = self._get_stable_camera_frame(camera_manager, preview_time)
+        if stable_frame is None:
+            print("Error: Failed to capture stable frame from camera")
+            return False
+
+        # 让用户选择初始场地边界
+        masked_frame, mask, boundary_points = self.select_initial_court_boundary(stable_frame)
+
+        # 从摄像头捕获和处理多帧进行角点检测
+        processed_frames, detected_corners = self._capture_and_process_camera_frames(
+            camera_manager, mask, num_frames
+        )
+
+        if not processed_frames or not detected_corners:
+            print("Error: Failed to process camera frames or detect corners")
+            return False
+
+        # 匹配角点与3D坐标
+        matched_corners = self.match_corners_to_3d_points(detected_corners, boundary_points)
+
+        # 计算外参
+        if not self.calibrate_extrinsic_parameters(matched_corners):
+            print("Error: Failed to calculate extrinsic parameters")
+            return False
+
+        # 绘制场地线
+        result_frame = self.draw_court_lines(processed_frames[0])
+
+        # 保存结果到默认目录
+        output_dir = "./calibration_results"
+        output_file = self.save_calibration_results(output_dir, processed_frames, result_frame)
+
+        # 显示最终结果
+        cv2.namedWindow("Camera Calibration Result", cv2.WINDOW_NORMAL)
+        cv2.imshow("Camera Calibration Result", result_frame)
+        
+        print("✅ Camera calibration completed successfully!")
+        print("Press any key to close the result window...")
+        cv2.waitKey(0)
+        cv2.destroyAllWindows()
+
+        return True
+
+    def _get_stable_camera_frame(self, camera_manager, preview_time):
+        """获取稳定的摄像头画面用于角点选择"""
+        print(f"📺 Showing camera preview for {preview_time} seconds...")
+        print("   Please position the camera to clearly see the badminton court")
+        
+        preview_window = "Camera Preview - Position Camera"
+        cv2.namedWindow(preview_window, cv2.WINDOW_NORMAL)
+        
+        start_time = time.time()
+        frame_count = 0
+        last_frame = None
+        
+        while time.time() - start_time < preview_time:
+            # 读取当前帧
+            (ret1, ret2), (frame1, frame2) = camera_manager.read()
+            
+            if ret1 and frame1 is not None:
+                # 使用第一个摄像头的画面进行标定
+                display_frame = frame1.copy()
+                
+                # 添加预览信息
+                remaining_time = preview_time - (time.time() - start_time)
+                cv2.putText(display_frame, f"Preview: {remaining_time:.1f}s remaining", 
+                           (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2)
+                cv2.putText(display_frame, "Position camera for clear court view", 
+                           (10, 70), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+                cv2.putText(display_frame, "Press SPACE to use current frame", 
+                           (10, 110), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 255, 255), 2)
+                
+                cv2.imshow(preview_window, display_frame)
+                last_frame = frame1.copy()
+                frame_count += 1
+            
+            # 检查用户输入
+            key = cv2.waitKey(1) & 0xFF
+            if key == ord(' '):  # 空格键提前结束预览
+                break
+            elif key == 27:  # ESC键取消
+                cv2.destroyWindow(preview_window)
+                return None
+            
+            time.sleep(0.033)  # 约30fps
+        
+        cv2.destroyWindow(preview_window)
+        
+        if last_frame is None:
+            print("Error: No frame captured during preview")
+            return None
+            
+        print(f"✅ Captured {frame_count} preview frames, using latest frame for calibration")
+        return last_frame
+
+    def _capture_and_process_camera_frames(self, camera_manager, mask, num_frames):
+        """从摄像头捕获和处理多帧进行角点检测"""
+        print(f"📸 Capturing {num_frames} frames from camera for corner detection...")
+        
+        processed_frames = []
+        all_detected_corners = []
+        
+        # 展示处理进度的窗口
+        progress_window = "Processing Camera Frames"
+        cv2.namedWindow(progress_window, cv2.WINDOW_NORMAL)
+        
+        for i in range(num_frames):
+            # 读取当前帧
+            (ret1, ret2), (frame1, frame2) = camera_manager.read()
+            
+            if not ret1 or frame1 is None:
+                print(f"Warning: Failed to read frame {i+1}, skipping...")
+                continue
+            
+            # 使用第一个摄像头的画面
+            frame = frame1.copy()
+            
+            # 应用相同的掩码和马赛克处理
+            masked_frame = frame.copy()
+            masked_frame = cv2.bitwise_and(masked_frame, masked_frame, mask=mask)
+
+            # 创建马赛克效果用于遮罩外区域
+            mosaic_frame = frame.copy()
+            mosaic_block_size = 20
+            h, w = frame.shape[:2]
+
+            for y in range(0, h, mosaic_block_size):
+                for x in range(0, w, mosaic_block_size):
+                    if y + mosaic_block_size <= h and x + mosaic_block_size <= w:
+                        roi = frame[y:y + mosaic_block_size, x:x + mosaic_block_size]
+                        color = roi.mean(axis=(0, 1))
+                        mosaic_frame[y:y + mosaic_block_size, x:x + mosaic_block_size] = color
+
+            outside_mask = cv2.bitwise_not(mask)
+            mosaic_outside = cv2.bitwise_and(mosaic_frame, mosaic_frame, mask=outside_mask)
+            final_frame = cv2.add(masked_frame, mosaic_outside)
+
+            # 使用YOLOv8检测角点
+            corners = self.detect_court_corners_yolov8(final_frame)
+            all_detected_corners.extend(corners)
+
+            # 保存处理后的帧
+            processed_frames.append(final_frame)
+
+            # 显示处理进度
+            progress_img = final_frame.copy()
+            # 在图像上显示检测到的角点
+            for pt in corners:
+                cv2.circle(progress_img, pt, 4, (0, 0, 255), -1)
+
+            # 添加进度文本
+            progress_text = f"Processing camera frame {i + 1}/{num_frames}"
+            text_size, _ = cv2.getTextSize(progress_text, cv2.FONT_HERSHEY_SIMPLEX, 1, 2)
+            cv2.rectangle(progress_img, (45, 35), (45 + text_size[0] + 10, 55 + text_size[1]), (0, 0, 0), -1)
+            cv2.putText(progress_img, progress_text,
+                        (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 255), 2)
+            cv2.imshow(progress_window, progress_img)
+            cv2.waitKey(10)  # 短暂显示
+            
+            # 添加小延迟以确保帧之间有变化
+            time.sleep(0.1)
+
+        cv2.destroyWindow(progress_window)
+
+        # 使用聚类阈值合并角点
+        consolidated_corners = self.consolidate_corner_points(all_detected_corners, threshold=30)
+        
+        print(f"✅ Processed {len(processed_frames)} camera frames")
+        print(f"   Total detected corners: {len(all_detected_corners)}")
+        print(f"   Consolidated corners: {len(consolidated_corners)}")
+
+        return processed_frames, consolidated_corners
+
     def calibrate_from_video(self, video_path, output_dir="./calibration_results"):
         """从视频进行外参标定的主函数"""
         # 显示初始指导
@@ -827,3 +1055,65 @@ def calibrate_cameras(video_path1, video_path2, output_dir):
 
     # 返回标定文件路径
     return extrinsic_file1, extrinsic_file2
+
+
+def calibrate_cameras_from_live_feed(camera_manager, output_dir, num_frames=20, preview_time=5.0):
+    """对网络摄像头进行实时标定"""
+    # 确保输出目录存在
+    os.makedirs(output_dir, exist_ok=True)
+
+    # 检查是否为双摄像头模式
+    if camera_manager.camera_url2:
+        print("🎥 Dual camera live feed calibration...")
+        
+        # 创建两个独立的单摄像头管理器进行分别标定
+        from network_camera import NetworkCameraManager
+        
+        # 相机1标定
+        print("📹 Calibrating Camera 1 from live feed...")
+        camera_manager1 = NetworkCameraManager(camera_manager.camera_url1, None, camera_manager.timestamp_header)
+        camera_manager1.start()
+        time.sleep(2)  # 等待流稳定
+        
+        calibrator1 = BadmintonCalibrator(config.camera_params_file_1, config.yolo_court_model)
+        success1 = calibrator1.calibrate_from_camera(camera_manager1, num_frames, preview_time)
+        
+        if success1:
+            extrinsic_file1 = os.path.join(output_dir, "camera1", "extrinsic_parameters.yaml")
+        else:
+            camera_manager1.stop()
+            return None, None
+        
+        camera_manager1.stop()
+        
+        # 相机2标定
+        print("📹 Calibrating Camera 2 from live feed...")
+        camera_manager2 = NetworkCameraManager(camera_manager.camera_url2, None, camera_manager.timestamp_header)
+        camera_manager2.start()
+        time.sleep(2)  # 等待流稳定
+        
+        calibrator2 = BadmintonCalibrator(config.camera_params_file_2, config.yolo_court_model)
+        success2 = calibrator2.calibrate_from_camera(camera_manager2, num_frames, preview_time)
+        
+        if success2:
+            extrinsic_file2 = os.path.join(output_dir, "camera2", "extrinsic_parameters.yaml")
+        else:
+            camera_manager2.stop()
+            return extrinsic_file1, None
+            
+        camera_manager2.stop()
+        
+        return extrinsic_file1, extrinsic_file2
+        
+    else:
+        print("🎥 Single camera live feed calibration...")
+        
+        # 单摄像头标定 - 使用相机1的参数
+        calibrator = BadmintonCalibrator(config.camera_params_file_1, config.yolo_court_model)
+        success = calibrator.calibrate_from_camera(camera_manager, num_frames, preview_time)
+        
+        if success:
+            extrinsic_file = os.path.join(output_dir, "camera1", "extrinsic_parameters.yaml")
+            return extrinsic_file, extrinsic_file  # 返回相同文件用于单摄像头模式
+        else:
+            return None, None
