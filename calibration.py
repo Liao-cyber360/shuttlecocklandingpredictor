@@ -765,7 +765,21 @@ class BadmintonCalibrator:
             bool: 标定是否成功
         """
         print("🎯 Starting camera live feed calibration...")
-        
+
+        # 等待摄像头初始化完成
+        print("⏳ Waiting for camera initialization...")
+        max_wait_time = 10  # 最大等待10秒
+        wait_start = time.time()
+
+        while time.time() - wait_start < max_wait_time:
+            if camera_manager.isOpened():
+                print("✅ Camera is ready")
+                break
+            time.sleep(0.5)
+        else:
+            print("❌ Error: Camera manager is not properly initialized")
+            return False
+
         # 检查摄像头是否正常工作
         if not camera_manager.isOpened():
             print("Error: Camera manager is not properly initialized")

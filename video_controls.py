@@ -85,7 +85,7 @@ class VideoProgressBar:
         """检查点是否在把手内"""
         handle_y = self.bar_y + self.bar_height // 2
         distance = math.sqrt((x - self.handle_x) ** 2 + (y - handle_y) ** 2)
-        return distance <= self.handle_radius + 5  # 增加一些容差
+        return distance <= self.handle_radius + 20  # 增加一些容差
     
     def _is_point_in_bar(self, x, y):
         """检查点是否在进度条内"""
@@ -211,33 +211,37 @@ class EnhancedVideoControls:
             self.seek_requested = False
             return True, self.seek_frame
         return False, 0
-    
+
     def render_with_video(self, video_frame):
         """将进度条与视频帧组合渲染"""
         if video_frame is None:
             return None
-        
+
         # 渲染进度条
         progress_img = self.progress_bar.render()
-        
+
         # 调整视频帧大小以匹配控制面板宽度
         video_height, video_width = video_frame.shape[:2]
         target_width = self.video_width
         target_height = int(video_height * target_width / video_width)
-        
+
         video_resized = cv2.resize(video_frame, (target_width, target_height))
-        
+
+        # 如果进度条宽度与目标宽度不匹配，调整进度条大小
+        if progress_img.shape[1] != target_width:
+            progress_img = cv2.resize(progress_img, (target_width, progress_img.shape[0]))
+
         # 垂直组合视频和控制面板
         combined_height = target_height + progress_img.shape[0]
         combined = np.zeros((combined_height, target_width, 3), dtype=np.uint8)
-        
+
         # 放置视频
         combined[:target_height, :target_width] = video_resized
-        
+
         # 放置进度条
         progress_height = progress_img.shape[0]
         combined[target_height:target_height + progress_height, :target_width] = progress_img
-        
+
         return combined
     
     def set_mouse_callback(self, window_name):
