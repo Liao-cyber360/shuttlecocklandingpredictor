@@ -456,8 +456,8 @@ class CourtBoundaryAnalyzer:
         x, y = point[0], point[1]
 
         boundaries = self.court_boundaries[game_type]
-        half_length = boundaries['length'] / 2-100
-        half_width = boundaries['width'] / 2-100
+        half_length = boundaries['length'] / 2
+        half_width = boundaries['width'] / 2
 
         # 检查是否在场地边界内
         in_bounds = (abs(x) <= half_length and abs(y) <= half_width)

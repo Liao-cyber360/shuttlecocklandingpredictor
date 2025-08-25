@@ -756,7 +756,7 @@ class StereoProcessor:
         print("⚠️ Falling back to traditional trajectory selection")
         return self.find_best_trajectory_for_prediction(current_time)
 
-    def _match_stereo_points(self, detections_left, detections_right, epipolar_threshold=18.0):
+    def _match_stereo_points(self, detections_left, detections_right, epipolar_threshold=30.0):
         """基于极线约束匹配双目点"""
         if not detections_left or not detections_right or self.fundamental_matrix is None:
             return []
