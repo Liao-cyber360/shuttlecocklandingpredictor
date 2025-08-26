@@ -453,7 +453,7 @@ class CourtBoundaryAnalyzer:
         if len(point) < 2:
             return False
 
-        x, y = point[0], point[1]
+        x, y = point[0]-670, point[1]-305
 
         boundaries = self.court_boundaries[game_type]
         half_length = boundaries['length'] / 2
@@ -469,7 +469,7 @@ class CourtBoundaryAnalyzer:
         if not self.is_point_in_court(point, game_type):
             return "OUT_OF_BOUNDS"
 
-        x, y = point[0], point[1]
+        x, y = point[0] - 670, point[1] - 305
         boundaries = self.court_boundaries[game_type]
 
         # 判断前场后场
@@ -490,7 +490,7 @@ class CourtBoundaryAnalyzer:
 
     def calculate_distance_to_boundary(self, point, game_type='singles'):
         """计算点到场地边界的最短距离"""
-        x, y = point[0], point[1]
+        x, y = point[0]-670, point[1]-305
 
         boundaries = self.court_boundaries[game_type]
         half_length = boundaries['length'] / 2
