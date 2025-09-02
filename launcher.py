@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
 羽毛球落点预测系统启动器 / Shuttlecock Landing Predictor Launcher
+系统级重构版本 - 启动新的GUI主界面
 """
 
 import sys
@@ -32,6 +33,7 @@ def main():
     print("=" * 60)
     print("羽毛球落点预测系统 v6.0 启动器")
     print("Shuttlecock Landing Predictor v6.0 Launcher")
+    print("系统级重构版本 - GUI模式选择界面")
     print("=" * 60)
     
     # 检查基本依赖
@@ -88,62 +90,60 @@ def main():
                 print(f"  pip install {pip_name}")
             return
     
-    # 选择启动模式
-    print("\n3. 选择启动模式:")
-    print("   1) 演示模式 (推荐) - 无需完整依赖，展示所有GUI功能")
-    print("   2) 完整模式 - 需要完整依赖，支持实际视频处理")
-    print("   3) 原始模式 - 使用原始OpenCV界面")
-    print("   4) 检查系统状态")
+    # 直接启动新的GUI主界面
+    print("\n3. 启动系统...")
+    print("   系统将以图形界面启动，支持模式选择和参数配置")
     
-    while True:
-        choice = input("\n请选择模式 (1-4): ").strip()
+    try:
+        print("\n启动新的GUI界面...")
+        # 尝试启动新的主界面
+        import new_main
+        return new_main.main()
+    except ImportError as e:
+        print(f"GUI界面启动失败: {e}")
+        print("回退到命令行模式...")
         
-        if choice == "1":
-            print("\n启动演示模式...")
-            try:
-                import demo_gui
-                demo_gui.main()
-            except Exception as e:
-                print(f"演示模式启动失败: {e}")
-                print("请检查PyQt6是否正确安装")
-            break
+        # 回退选项
+        print("\n回退模式选择:")
+        print("   1) 使用旧版GUI")
+        print("   2) 使用命令行版本")
+        print("   3) 检查系统状态")
+        
+        while True:
+            choice = input("\n请选择模式 (1-3): ").strip()
             
-        elif choice == "2":
-            if missing_optional:
-                print(f"\n⚠️  警告: 缺少可选依赖: {', '.join([dep[0] for dep in missing_optional])}")
-                print("完整模式可能无法正常工作")
-                response = input("仍要继续吗? (y/n): ").strip().lower()
-                if response != 'y':
-                    continue
-            
-            print("\n启动完整模式...")
-            try:
-                import gui_main
-                gui_main.main()
-            except Exception as e:
-                print(f"完整模式启动失败: {e}")
-                print("请安装所有依赖或使用演示模式")
-            break
-            
-        elif choice == "3":
-            print("\n启动原始模式...")
-            print("使用命令行参数启动原始系统:")
-            print("  python main.py --video-mode --video1 path1.mp4 --video2 path2.mp4")
-            print("  python main.py --camera-mode --camera-url1 http://192.168.1.100:8080/video")
-            break
-            
-        elif choice == "4":
-            print("\n系统状态检查:")
-            try:
-                import test_core
-                test_core.main()
-            except Exception as e:
-                print(f"系统状态检查失败: {e}")
-            break
-            
-        else:
-            print("无效选择，请输入1-4")
-            continue
+            if choice == "1":
+                print("\n启动旧版GUI...")
+                try:
+                    import gui_main
+                    gui_main.main()
+                except Exception as e:
+                    print(f"旧版GUI启动失败: {e}")
+                break
+                
+            elif choice == "2":
+                print("\n命令行模式信息:")
+                print("使用以下命令启动:")
+                print("  python main.py --video-mode --video1 path1.mp4 --video2 path2.mp4")
+                print("  python main.py --camera-mode --camera-url1 http://192.168.1.100:8080/video")
+                break
+                
+            elif choice == "3":
+                print("\n系统状态检查:")
+                try:
+                    import test_core
+                    test_core.main()
+                except Exception as e:
+                    print(f"系统状态检查失败: {e}")
+                break
+                
+            else:
+                print("无效选择，请输入1-3")
+                continue
+    except Exception as e:
+        print(f"系统启动失败: {e}")
+        import traceback
+        traceback.print_exc()
 
 if __name__ == "__main__":
     try:
