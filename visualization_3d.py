@@ -34,7 +34,7 @@ class Interactive3DVisualizer:
             'court_lines', 'net', 'floor', 'all_valid_points',
             'prediction_trajectory_points', 'rejected_points',
             'low_quality_points', 'triangulation_failed_points',
-            'predicted_trajectory_line', 'landing_point', 'center_point'  # 新增中心点
+            'predicted_trajectory_line', 'landing_point'
         ]
 
         # Data management with thread safety
@@ -215,10 +215,6 @@ class Interactive3DVisualizer:
             )
             self.geometries['floor'].translate([0, -0.05, 0])
             self.geometries['floor'].paint_uniform_color([0.2, 0.2, 0.2])
-            self.geometries['center_point'] = o3d.geometry.TriangleMesh.create_sphere(radius=20)
-            self.geometries['center_point'].paint_uniform_color([1, 1, 0])  # 黄色
-            self.geometries['center_point'].translate([0, 0 , 10])  # 场地中心点稍微高一点
-            self.vis.add_geometry(self.geometries['center_point'])
 
             # Create point clouds for different data types
             point_cloud_names = [

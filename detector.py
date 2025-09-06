@@ -359,12 +359,12 @@ class BufferedImageProcessor:
 
         print(f"BufferedImageProcessor initialized with {buffer_duration}s buffer")
 
-    def add_frame_pair(self, frame1, frame2, timestamp):
-        """添加帧对到缓冲区"""
-        if not self.is_processing:  # 只在非处理状态下缓冲
-            self.image_buffer1.append(frame1.copy() if frame1 is not None else None)
-            self.image_buffer2.append(frame2.copy() if frame2 is not None else None)
-            self.timestamp_buffer.append(timestamp)
+    def add_frame_pair(self, frame1, frame2, frame_index):
+        """使用基于帧号的时间戳（适用于本地视频）"""
+        timestamp = frame_index / self.fps  # 关键修改：按视频帧率生成时间戳
+        self.image_buffer1.append(frame1.copy() if frame1 is not None else None)
+        self.image_buffer2.append(frame2.copy() if frame2 is not None else None)
+        self.timestamp_buffer.append(timestamp)
 
     def trigger_processing(self, callback=None):
         """Thread-safe processing trigger with cooldown"""
@@ -756,7 +756,7 @@ class StereoProcessor:
         print("⚠️ Falling back to traditional trajectory selection")
         return self.find_best_trajectory_for_prediction(current_time)
 
-    def _match_stereo_points(self, detections_left, detections_right, epipolar_threshold=30.0):
+    def _match_stereo_points(self, detections_left, detections_right, epipolar_threshold=18.0):
         """基于极线约束匹配双目点"""
         if not detections_left or not detections_right or self.fundamental_matrix is None:
             return []

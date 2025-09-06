@@ -229,29 +229,16 @@ class BufferedBadmintonSystem:
         return True
 
     def calibration_mode(self):
-        """相机标定模式 - 增强错误处理，支持视频和实时摄像头"""
+        """相机标定模式 - 增强错误处理"""
         print("🎯 Starting enhanced camera calibration...")
 
         output_dir = os.path.join(config.results_dir, "calibration")
         os.makedirs(output_dir, exist_ok=True)
 
         try:
-            if self.network_mode:
-                # 网络摄像头标定模式
-                print("🌐 Using network camera live feed calibration...")
-                from calibration import calibrate_cameras_from_live_feed
-                
-                extrinsic_file1, extrinsic_file2 = calibrate_cameras_from_live_feed(
-                    self.network_camera_manager, output_dir, num_frames=20, preview_time=5.0
-                )
-            else:
-                # 视频文件标定模式
-                print("📹 Using video file calibration...")
-                from calibration import calibrate_cameras
-                
-                extrinsic_file1, extrinsic_file2 = calibrate_cameras(
-                    self.video_path1, self.video_path2, output_dir
-                )
+            extrinsic_file1, extrinsic_file2 = calibrate_cameras(
+                self.video_path1, self.video_path2, output_dir
+            )
 
             if not extrinsic_file1 or not extrinsic_file2:
                 raise ValueError("Calibration files not generated properly")
@@ -269,8 +256,7 @@ class BufferedBadmintonSystem:
                 raise ValueError("Failed to load calibration parameters")
 
             self.calibration_done = True
-            mode_text = "Network Camera" if self.network_mode else "Video File"
-            print(f"✅ {mode_text} calibration completed successfully!")
+            print("✅ Camera calibration completed successfully!")
             print(f"   Camera 1 params: {extrinsic_file1}")
             print(f"   Camera 2 params: {extrinsic_file2}")
             return True
@@ -769,10 +755,14 @@ class BufferedBadmintonSystem:
         self.frame_count += 1
         self._update_fps()
 
-        # 添加到缓冲区（只在缓冲状态且未处理时）
-        if self.state == SystemState.BUFFERING and not self.processing_lock:
-            self.buffered_processor.add_frame_pair(frame1, frame2, self.last_frame_time)
+        # 替换原来的时间戳生成方式
+        frame_index = int(self.cap1.get(cv2.CAP_PROP_POS_FRAMES))  # 获取当前帧号
 
+        if self.state == SystemState.BUFFERING and not self.processing_lock:
+            self.buffered_processor.add_frame_pair(
+                frame1, frame2,
+                frame_index  # 传递帧号而非系统时间
+            )
         # 保存当前帧用于显示
         self.current_frame1 = frame1 if frame1 is not None else np.zeros((480, 640, 3), dtype=np.uint8)
         self.current_frame2 = frame2 if frame2 is not None else np.zeros((480, 640, 3), dtype=np.uint8)
@@ -1321,11 +1311,7 @@ def main():
                 print(f"   Camera 2: Single camera mode")
             print(f"   Timestamp header: {args.timestamp_header}")
             
-            system.initialize_network_cameras(
-                args.camera_url1, 
-                args.camera_url2, 
-                args.timestamp_header
-            )
+
 
         # 处理标定
         if args.calibrated and args.cam1_params and args.cam2_params:

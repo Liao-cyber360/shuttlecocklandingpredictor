@@ -5,36 +5,36 @@ import math
 
 class VideoProgressBar:
     """视频播放进度条组件"""
-    
+
     def __init__(self, width=800, height=40, margin=10):
         self.width = width
         self.height = height
         self.margin = margin
-        
+
         # 进度条颜色
         self.bg_color = (50, 50, 50)        # 背景
         self.track_color = (100, 100, 100)  # 轨道
         self.progress_color = (0, 150, 255) # 进度
         self.handle_color = (255, 255, 255) # 拖拽把手
         self.text_color = (255, 255, 255)   # 文字
-        
+
         # 状态
         self.total_frames = 0
         self.current_frame = 0
         self.fps = 30.0
         self.dragging = False
         self.drag_start_x = 0
-        
+
         # 进度条区域
         self.bar_x = margin
         self.bar_y = margin
         self.bar_width = width - 2 * margin
         self.bar_height = 20
-        
+
         # 把手
         self.handle_radius = 8
         self.handle_x = self.bar_x
-        
+
         print(f"📊 Video progress bar initialized ({width}x{height})")
     
     def set_video_info(self, total_frames, fps):
@@ -55,7 +55,7 @@ class VideoProgressBar:
             self.handle_x = self.bar_x + progress * self.bar_width
         else:
             self.handle_x = self.bar_x
-    
+
     def handle_mouse_event(self, event, x, y, flags, param):
         """处理鼠标事件"""
         if event == cv2.EVENT_LBUTTONDOWN:
@@ -68,24 +68,24 @@ class VideoProgressBar:
             elif self._is_point_in_bar(x, y):
                 self._seek_to_position(x)
                 return True
-        
+
         elif event == cv2.EVENT_LBUTTONUP:
             if self.dragging:
                 self.dragging = False
                 return True
-        
+
         elif event == cv2.EVENT_MOUSEMOVE:
             if self.dragging:
                 self._seek_to_position(x)
                 return True
-        
+
         return False
     
     def _is_point_in_handle(self, x, y):
         """检查点是否在把手内"""
         handle_y = self.bar_y + self.bar_height // 2
         distance = math.sqrt((x - self.handle_x) ** 2 + (y - handle_y) ** 2)
-        return distance <= self.handle_radius + 20  # 增加一些容差
+        return distance <= self.handle_radius + 5  # 增加一些容差
     
     def _is_point_in_bar(self, x, y):
         """检查点是否在进度条内"""
@@ -183,9 +183,50 @@ class EnhancedVideoControls:
         self.playback_speed = 1.0
         self.seek_requested = False
         self.seek_frame = 0
+        # 键盘控制设置
+        self.frame_step = 10  # 每次快进/快退的帧数
         
         print(f"🎮 Enhanced video controls initialized")
-    
+
+        def handle_keyboard(self, key):
+            """处理键盘事件"""
+            seek_requested = False
+            new_frame = self.progress_bar.current_frame
+
+            if key == ord(' '):  # 空格键 - 播放/暂停
+                self.playing = not self.playing
+                print(f"⏯️ {'播放' if self.playing else '暂停'}")
+
+            elif key == 2424832 or key == 81:  # 左箭头键 (Linux/Windows)
+                # 快退
+                new_frame = max(0, self.progress_bar.current_frame - self.frame_step)
+                seek_requested = True
+                print(f"⏪ 快退到第 {new_frame} 帧")
+
+            elif key == 2555904 or key == 83:  # 右箭头键 (Linux/Windows)
+                # 快进
+                new_frame = min(self.progress_bar.total_frames - 1,
+                                self.progress_bar.current_frame + self.frame_step)
+                seek_requested = True
+                print(f"⏩ 快进到第 {new_frame} 帧")
+
+            elif key == ord('-') or key == ord('_'):
+                # 减少跳跃步长
+                self.frame_step = max(1, self.frame_step - 5)
+                print(f"📉 跳跃步长: {self.frame_step} 帧")
+
+            elif key == ord('+') or key == ord('='):
+                # 增加跳跃步长
+                self.frame_step = min(60, self.frame_step + 5)
+                print(f"📈 跳跃步长: {self.frame_step} 帧")
+
+            if seek_requested:
+                self.seek_requested = True
+                self.seek_frame = new_frame
+                self.progress_bar.update_position(new_frame)
+
+            return seek_requested
+
     def set_video_info(self, total_frames, fps):
         """设置视频信息"""
         self.progress_bar.set_video_info(total_frames, fps)
@@ -193,7 +234,7 @@ class EnhancedVideoControls:
     def update_position(self, current_frame):
         """更新播放位置"""
         self.progress_bar.update_position(current_frame)
-    
+
     def mouse_callback(self, event, x, y, flags, param):
         """鼠标回调函数"""
         # 调整坐标到进度条区域
@@ -212,6 +253,23 @@ class EnhancedVideoControls:
             return True, self.seek_frame
         return False, 0
 
+    def is_playing(self):
+        """获取播放状态"""
+        return self.playing
+
+    def set_playing(self, playing):
+        """设置播放状态"""
+        self.playing = playing
+
+    def get_frame_step(self):
+        """获取当前帧步长"""
+        return self.frame_step
+
+    def set_frame_step(self, step):
+        """设置帧步长"""
+        self.frame_step = max(1, min(60, step))
+
+    # 修复渲染方法中的宽度问题
     def render_with_video(self, video_frame):
         """将进度条与视频帧组合渲染"""
         if video_frame is None:
@@ -227,7 +285,7 @@ class EnhancedVideoControls:
 
         video_resized = cv2.resize(video_frame, (target_width, target_height))
 
-        # 如果进度条宽度与目标宽度不匹配，调整进度条大小
+        # 修复进度条宽度不匹配问题
         if progress_img.shape[1] != target_width:
             progress_img = cv2.resize(progress_img, (target_width, progress_img.shape[0]))
 
@@ -241,6 +299,11 @@ class EnhancedVideoControls:
         # 放置进度条
         progress_height = progress_img.shape[0]
         combined[target_height:target_height + progress_height, :target_width] = progress_img
+
+        # 添加键盘快捷键提示
+        help_text = f"快捷键: ←→ 快进/快退({self.frame_step}帧) | 空格 播放/暂停 | +- 调整步长"
+        cv2.putText(combined, help_text, (10, combined_height - 10),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 255), 1)
 
         return combined
     

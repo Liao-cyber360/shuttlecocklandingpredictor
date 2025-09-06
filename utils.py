@@ -9,8 +9,8 @@ class Config:
 
     def __init__(self):
         # 相机参数
-        self.camera_params_file_1 ="E:\hawkeye\calibration\calibration_results_1.yaml"
-        self.camera_params_file_2 ="E:\hawkeye\calibration\calibration_results_2.yaml"
+        self.camera_params_file_1 = "E:\hawkeye\calibration\calibration_results_2025-08-11_18-06-15.yaml"
+        self.camera_params_file_2 = "E:\hawkeye\calibration\calibration_results_2025-08-11_18-06-15.yaml"
 
         # 模型参数
         self.yolo_ball_model = "E:\\hawkeye\\ball\\best.pt"
